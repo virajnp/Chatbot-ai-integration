@@ -2,12 +2,14 @@
 # Licensed under the MIT License.
 
 from typing import List
-
 from botbuilder.core import ActivityHandler, TurnContext
 from botbuilder.schema import ChannelAccount
 
-
 class EchoBot(ActivityHandler):
+    def __init__(self, text_analytics_client):
+        super().__init__()
+        self.ta = text_analytics_client  # Azure Text Analytics client
+
     async def on_members_added_activity(
         self, members_added: List[ChannelAccount], turn_context: TurnContext
     ):
@@ -50,14 +52,14 @@ class EchoBot(ActivityHandler):
                 "Here’s what I can do right now:\n"
                 "• Echo back any message you send.\n"
                 "• Reverse text with the command: reverse: <your text>\n"
-                "• Handle malformed or empty input politely.\n"
+                "• Analyze message sentiment (positive/neutral/negative) and show confidence scores.\n"
                 "Try: reverse: hello world"
             )
             return
 
         # reverse:<text> command
         if lowered.startswith("reverse:"):
-            content = user_text[len("reverse:") :].strip()
+            content = user_text[len("reverse:"):].strip()
             if not content:
                 await turn_context.send_activity(
                     "Please provide text after 'reverse:'. For example: reverse: chatbot"
@@ -66,8 +68,23 @@ class EchoBot(ActivityHandler):
             await turn_context.send_activity(f"Reversed: {content[::-1]}")
             return
 
-        # Default: echo back the message
-        await turn_context.send_activity(f"You said: {user_text}")
+        # --- Sentiment Analysis (default path) ---
+        sentiment_line = ""
+        try:
+            # The SDK returns a list; we provided a single string.
+            result = self.ta.analyze_sentiment(documents=[user_text])[0]
+            overall = result.sentiment  # 'positive' | 'neutral' | 'negative' | 'mixed'
+            score = result.confidence_scores
+            sentiment_line = (
+                f"\n\n**Sentiment:** {overall}  "
+                f"(positive: {score.positive:.2f}, neutral: {score.neutral:.2f}, negative: {score.negative:.2f})"
+            )
+        except Exception as e:
+            # Don't fail the chat on analysis error; just report gracefully.
+            sentiment_line = f"\n\n(Sentiment analysis unavailable: {type(e).__name__})"
+
+        # Default: echo plus sentiment
+        await turn_context.send_activity(f"You said: {user_text}{sentiment_line}")
 
     async def on_event_activity(self, turn_context: TurnContext):
         """
